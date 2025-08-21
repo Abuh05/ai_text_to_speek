@@ -1,48 +1,43 @@
-# app.py
 import streamlit as st
-import soundfile as sf
-from kokoro import KPipeline
-import torch
-import io
+import asyncio
+import edge_tts
+import tempfile
 
-# Load the Kokoro TTS Pipeline
-@st.cache_resource
-def load_pipeline():
-    return KPipeline(lang_code="a")
+st.set_page_config(page_title="Edge TTS", page_icon="🔊", layout="centered")
+st.title("🔊 Text-to-Speech (Edge-TTS)")
+st.caption("Online TTS via Microsoft Edge voices (no PyTorch/NumPy).")
 
-pipeline = load_pipeline()
+# A couple of sample voices; you can list many more from edge-tts docs
+VOICES = [
+    "en-US-AriaNeural",
+    "en-US-GuyNeural",
+    "en-GB-LibbyNeural",
+    "en-AU-NatashaNeural",
+]
 
-# Streamlit UI
-st.set_page_config(page_title="Kokoro TTS App", page_icon="🎙️", layout="centered")
+text = st.text_area("Enter text:", "Hello! This uses Edge TTS.", height=140, key="edge_text")
+voice = st.selectbox("Voice:", VOICES, index=0, key="edge_voice")
+rate = st.slider("Rate (%)", -50, 50, 0, key="edge_rate")
+pitch = st.slider("Pitch (semitones)", -10, 10, 0, key="edge_pitch")
 
-st.title("🎙️ Kokoro Text-to-Speech App")
-st.markdown("Convert your text into **natural-sounding speech** using the Kokoro model.")
+async def synthesize(text, voice, rate, pitch):
+    communicate = edge_tts.Communicate(
+        text,
+        voice=voice,
+        rate=f"{rate:+d}%",
+        pitch=f"{pitch:+d}Hz",
+    )
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+        out_path = f.name
+    await communicate.save(out_path)
+    return out_path
 
-# Text Input
-text = st.text_area("📝 Enter your text here:", height=150, placeholder="Type something to convert to speech...")
-
-# Voice Selection
-voices = ["af_heart", "af_sky", "af_glow", "af_hope"]
-voice = st.selectbox("🎤 Choose a voice:", voices)
-
-# Generate Button
-if st.button("🔊 Generate Speech"):
-    if text.strip() == "":
-        st.warning("⚠️ Please enter some text.")
+if st.button("Generate Speech", key="edge_generate"):
+    if not text.strip():
+        st.warning("Please enter some text.")
     else:
-        st.info("🎶 Generating speech... Please wait.")
-        generator = pipeline(text, voice=voice)
-
-        for i, (gs, ps, audio) in enumerate(generator):
-            # Convert to WAV bytes for playback and download
-            wav_bytes = io.BytesIO()
-            sf.write(wav_bytes, audio, 24000, format="WAV")
-            wav_bytes.seek(0)
-
-            st.audio(wav_bytes, format="audio/wav")
-            st.download_button(
-                label="💾 Download Audio",
-                data=wav_bytes,
-                file_name=f"tts_output_{i}.wav",
-                mime="audio/wav"
-            )
+        with st.spinner("Generating..."):
+            audio_path = asyncio.run(synthesize(text, voice, rate, pitch))
+        st.audio(audio_path, format="audio/mp3")
+        with open(audio_path, "rb") as f:
+            st.download_button("💾 Download MP3", f, file_name="tts_output.mp3", key="edge_download")
